@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -16,7 +17,9 @@ import (
 // clientOnlyRelay is a relay that serves only the agents its plan is sold
 // for, telling them by their User-Agent as sub2api's codex_cli_only and
 // packy's Claude Code-only plans do: 403 to anyone else, magpie's own test
-// request among them (耍赖天都爱 on Discord).
+// request among them (耍赖天都爱 on Discord). On Messages it asks what
+// sub2api's Claude Code-only groups ask: Claude Code's system prompt, or,
+// without it, one token, as Claude Code's own checks ask for; else 503.
 type clientOnlyRelay struct {
 	mu   sync.Mutex
 	head http.Header
@@ -37,6 +40,13 @@ func (f *clientOnlyRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(403)
 		io.WriteString(w, `{"error":{"message":"This account only allows Codex official clients","type":"forbidden"}}`)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/messages") && !bytes.Contains(b, []byte("You are Claude Code")) &&
+		!bytes.Contains(b, []byte(`"max_tokens":1,`)) && !bytes.Contains(b, []byte(`"max_tokens":1}`)) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(503)
+		io.WriteString(w, `{"error":{"message":"No available accounts: this group only allows Claude Code clients","type":"api_error"},"type":"error"}`)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -114,7 +124,7 @@ func TestModelTestAsClient(t *testing.T) {
 		"Authorization":            {"Bearer " + Token},
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"relay/claude-opus-4-8","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`))
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"relay/claude-opus-4-8","max_tokens":5,"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}],"messages":[{"role":"user","content":"hi"}]}`))
 	for k, v := range claude {
 		req.Header[k] = v
 	}
@@ -138,7 +148,7 @@ func TestModelTestAsClient(t *testing.T) {
 			t.Errorf("as Claude Code, %s went: %q", k, head.Get(k))
 		}
 	}
-	if head.Get("X-Api-Key") != "k" || body["stream"] != true {
+	if head.Get("X-Api-Key") != "k" || body["stream"] != true || body["max_tokens"] != 1.0 {
 		t.Errorf("as Claude Code: key %q, body %v", head.Get("X-Api-Key"), body)
 	}
 	// the whole provider's test, as the CLI's without models

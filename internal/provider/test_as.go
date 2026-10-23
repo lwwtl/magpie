@@ -196,7 +196,12 @@ func clientHeaders(client string, h http.Header) {
 }
 
 // asClient is a test body asked as client asks: streamed, as both agents
-// ask every request, and on Responses not kept, as Codex asks.
+// ask every request, on Responses not kept, as Codex asks, and on Messages
+// for one token, as Claude Code's own checks of a key, a model or a quota
+// ask. A Claude Code-only relay lets a request with Claude Code's
+// User-Agent through without its system prompt only when it asks for one
+// token (sub2api's ClaudeCodeValidator): for 16 it answered 503 "this
+// group only allows Claude Code clients".
 func asClient(client string, proto Protocol, body string) string {
 	var m map[string]any
 	if json.Unmarshal([]byte(body), &m) != nil {
@@ -205,6 +210,9 @@ func asClient(client string, proto Protocol, body string) string {
 	m["stream"] = true
 	if client == ClientCodex && proto == Responses {
 		m["store"] = false
+	}
+	if client == ClientClaudeCode && proto == Anthropic {
+		m["max_tokens"] = 1
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
